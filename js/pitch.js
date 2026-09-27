@@ -67,7 +67,8 @@ export async function toMono16k(audioBuffer) {
       src.connect(off.destination);
       src.start();
       const out = await off.startRendering();
-      return out.getChannelData(0);
+      const data = out.getChannelData(0);
+      if (rms(data) > 1e-6 || rms(audioBuffer.getChannelData(0)) < 1e-5) return data;
     } catch (e) { /* fällt auf manuelles Umrechnen zurück */ }
   }
   const input = audioBuffer.getChannelData(0);
@@ -80,6 +81,21 @@ export async function toMono16k(audioBuffer) {
     out[i] = b > a ? s / (b - a) : 0;
   }
   return out;
+}
+
+export function normalize(samples) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) { const a = Math.abs(samples[i]); if (a > peak) peak = a; }
+  if (peak < 1e-4 || peak > 0.5) return samples;
+  const g = 0.9 / peak;
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = samples[i] * g;
+  return out;
+}
+
+function pause() {
+  if (typeof MessageChannel === 'undefined') return new Promise((r) => setTimeout(r, 0));
+  return new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0); });
 }
 
 export async function trackPitch(samples, onProgress) {
@@ -99,7 +115,7 @@ export async function trackPitch(samples, onProgress) {
     }
     if (f % chunk === chunk - 1) {
       onProgress && onProgress(f / n);
-      await new Promise((r) => setTimeout(r, 0));
+      await pause();
     }
   }
   onProgress && onProgress(1);

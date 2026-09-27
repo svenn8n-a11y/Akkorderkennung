@@ -24,17 +24,26 @@ self.onmessage = async (e) => {
     const run = await load((p) => self.postMessage({ id, type: 'laden', progress: p }));
     self.postMessage({ id, type: 'geladen' });
     if (onlyLoad) return;
-    self.postMessage({ id, type: 'erkennen' });
-    const out = await run(audio, {
-      language: 'german',
-      task: 'transcribe',
-      return_timestamps: 'word',
-      chunk_length_s: 30,
-      stride_length_s: 5,
-    });
-    const words = (out.chunks || [])
-      .map((c) => ({ text: c.text.trim(), start: c.timestamp[0], end: c.timestamp[1] ?? c.timestamp[0] }))
-      .filter((w) => w.text);
+    const SR = 16000, WIN = 30 * SR, STEP = 26 * SR;
+    const words = [];
+    self.postMessage({ id, type: 'erkennen', progress: 0 });
+    for (let off = 0; off < audio.length; off += STEP) {
+      const last = off + WIN >= audio.length;
+      const seg = audio.subarray(off, Math.min(audio.length, off + WIN));
+      const out = await run(seg, { language: 'german', task: 'transcribe', return_timestamps: 'word' });
+      const t0 = off / SR;
+      const from = off ? t0 + 2 : 0;
+      const to = last ? Infinity : t0 + 28;
+      for (const c of out.chunks || []) {
+        const end = t0 + (c.timestamp[1] ?? c.timestamp[0]);
+        let start = t0 + c.timestamp[0];
+        if (c.timestamp[0] < 0.2 && end - start > 1) start = end - 0.8;
+        const text = c.text.trim();
+        if (text && start >= from && start < to) words.push({ text, start, end });
+      }
+      self.postMessage({ id, type: 'erkennen', progress: Math.min(1, (off + WIN) / audio.length) });
+      if (last) break;
+    }
     self.postMessage({ id, type: 'fertig', words });
   } catch (err) {
     self.postMessage({ id, type: 'fehler', message: String(err?.message || err) });

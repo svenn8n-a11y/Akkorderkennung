@@ -291,3 +291,9 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padd
 @media (prefers-reduced-motion: reduce) { .songliste .wisch-inhalt { transition: none; } }
 .toast { display: flex; align-items: center; justify-content: center; gap: 16px; }
 .toast-knopf { border: 0; background: none; color: var(--hl-soft); font-weight: 800; padding: 8px 4px; min-height: 40px; }
+
+.blatt-zwischen { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 2px 0 calc(12px * var(--fs)); padding: 4px 8px; border-left: 3px solid var(--line); border-radius: 4px; }
+.blatt-zwischen span { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 4px; }
+.blatt-zwischen button { border: 0; background: none; padding: 4px 2px; font-weight: 800; color: var(--chord); font-size: calc(1.1rem * var(--fs)); min-height: 36px; }
+.blatt-zwischen.jetzt { background: var(--hl-soft); }
+.blatt-zeile.ohne-akkorde .silbe { padding-top: 0; }

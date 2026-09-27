@@ -11,7 +11,7 @@ function getWorker() {
       const m = e.data;
       if (m.type === 'laden') job.onStatus({ phase: 'laden', progress: m.progress });
       else if (m.type === 'geladen') { job.onStatus({ phase: 'geladen' }); if (job.onlyLoad) { jobs.delete(m.id); job.resolve(null); } }
-      else if (m.type === 'erkennen') job.onStatus({ phase: 'erkennen' });
+      else if (m.type === 'erkennen') job.onStatus({ phase: 'erkennen', progress: m.progress });
       else if (m.type === 'fertig') { jobs.delete(m.id); job.resolve(m.words); }
       else if (m.type === 'fehler') { jobs.delete(m.id); job.reject(new Error(m.message)); }
     };
@@ -43,11 +43,20 @@ export function preloadModel(onStatus = () => {}) {
 
 const JUNK = /untertitel|amara\.org|zdf|swr|vielen dank f(ü|ue)rs zuschauen|copyright/i;
 
-export function cleanWords(words, notes) {
+export function cleanWords(words, track) {
+  const lv = [...track.level].sort((a, b) => a - b);
+  const gate = Math.max(0.004, (lv[Math.floor(lv.length * 0.95)] || 0) * 0.08);
+  const hop = track.hop;
+  words = words.map((w, i) => {
+    const next = words[i + 1];
+    if (w.end - w.start > 1.5 && next && next.start - w.end < 0.1) return { ...w, start: w.end - 0.8 };
+    return w;
+  });
   return words.filter((w) => {
     if (JUNK.test(w.text)) return false;
-    if (!notes.length) return true;
-    return notes.some((n) => n.end > w.start - 0.4 && n.start < w.end + 0.4);
+    const a = Math.max(0, Math.floor((w.start - 0.3) / hop)), b = Math.min(track.level.length - 1, Math.ceil((w.end + 0.3) / hop));
+    for (let i = a; i <= b; i++) if (track.level[i] > gate) return true;
+    return false;
   });
 }
 

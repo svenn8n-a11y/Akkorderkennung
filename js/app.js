@@ -1,5 +1,5 @@
 import { audioCtx, openMic, stopStream, Recorder, LiveInput, ChordListener, Player, metronomeClick, buildMidi } from './audio.js';
-import { toMono16k, trackPitch } from './pitch.js';
+import { toMono16k, trackPitch, normalize } from './pitch.js';
 import { analyse, buildAbc } from './analyse.js';
 import { midiName, keyName, chordName, chordKey, allKeys, setGermanNames, pcName, guitarChordName, mod12 } from './musik.js';
 import { diagramSvg, bestCapo } from './gitarre.js';
@@ -282,7 +282,8 @@ async function stopRecording() {
   $('recZeit').textContent = '0:00';
   $('metroProbe').textContent = 'Probehören';
   if (!blob) return;
-  await processAudio(blob, r.metro ? { bpm: r.metro.bpm, meter: r.metro.meter, barOrigin: 0 } : {});
+  const recSeconds = r.recorder.seconds();
+  await processAudio(blob, { ...(r.metro ? { bpm: r.metro.bpm, meter: r.metro.meter, barOrigin: 0 } : {}), recSeconds });
 }
 
 $('recKnopf').addEventListener('click', () => (rec ? stopRecording() : startRecording()));
@@ -310,7 +311,7 @@ async function processAudio(blob, extra = {}) {
   overlay('Melodie wird ausgewertet …', 0);
   try {
     const buf = await decode(await blob.arrayBuffer());
-    const mono = await toMono16k(buf);
+    const mono = normalize(await toMono16k(buf));
     const track = await trackPitch(mono, (f) => overlay('Melodie wird ausgewertet …', f));
     const now = Date.now();
     const settings = { bpm: extra.bpm || null, lyrics: '', autoSplit: true, overrides: {} };
@@ -331,7 +332,9 @@ async function processAudio(blob, extra = {}) {
     await saveSong(song);
     persist();
     overlay(null);
-    if (!an.notes.length) toast('Keine Töne erkannt. Die Aufnahme ist trotzdem gespeichert. Näher ans Mikro und etwas lauter singen.', 6000);
+    if (extra.recSeconds > 3 && buf.duration < extra.recSeconds * 0.6)
+      toast(`Achtung: Aufgenommen wurden ${Math.round(extra.recSeconds)} s, lesbar waren nur ${Math.round(buf.duration)} s. Die Aufnahme wurde nicht vollständig gelesen, bitte kurz Bescheid geben.`, 8000);
+    else if (!an.notes.length) toast('Keine Töne erkannt. Die Aufnahme ist trotzdem gespeichert. Näher ans Mikro und etwas lauter singen.', 6000);
     await openSong(song.id);
     if (an.notes.length && pref('textAuto', true)) startTranscription(song, mono);
   } catch (err) {
@@ -383,18 +386,17 @@ async function startTranscription(song, mono = null, force = false, replace = fa
   try {
     if (!mono) {
       bannerProgress('Aufnahme wird vorbereitet …', null);
-      mono = await toMono16k(await decode(await song.audio.arrayBuffer()));
+      mono = normalize(await toMono16k(await decode(await song.audio.arrayBuffer())));
     }
     bannerProgress(pref('modellGeladen', false) ? 'Sprachmodell wird gestartet …' : 'Sprachmodell wird geladen …', pref('modellGeladen', false) ? null : 0);
     const words = await transcribe(mono, (st) => {
       if (st.phase === 'laden' && !pref('modellGeladen', false)) bannerProgress('Sprachmodell wird geladen (einmalig) …', (st.progress || 0) / 100);
       if (st.phase === 'geladen') setPref('modellGeladen', true);
-      if (st.phase === 'erkennen') bannerProgress('Text wird erkannt …', null);
+      if (st.phase === 'erkennen') bannerProgress(`Text wird erkannt … ${Math.round((st.progress || 0) * 100)} %`, Math.max(0.03, st.progress || 0));
     });
     const fresh = await getSong(song.id);
     if (!fresh) return;
-    const an = analyse(fresh.track, fresh.settings);
-    const clean = cleanWords(words, an.notes);
+    const clean = cleanWords(words, fresh.track);
     fresh.words = clean;
     fresh.wordsText = wordsToText(clean);
     const target = state.song && state.song.id === fresh.id ? state.song : fresh;
@@ -732,23 +734,27 @@ function anchorsForSlots() {
   const an = state.an;
   const notes = an.q.notes16;
   const map = new Map();
+  const pre = new Map();
   const tail = [];
+  const add = (m, i, sl) => { if (!m.has(i)) m.set(i, []); m.get(i).push(sl); };
   let prev = null;
   an.slots.forEach((sl) => {
     const k = chordKey(sl.chord);
     const changed = k !== prev;
     prev = k;
     if (!changed) return;
-    let idx = notes.findIndex((n) => n.syl && n.s16 >= sl.start16 && n.s16 < sl.start16 + sl.len16);
-    if (idx < 0) {
-      for (let j = notes.length - 1; j >= 0; j--) if (notes[j].syl && notes[j].s16 <= sl.start16) { idx = j; break; }
-    }
-    if (idx < 0) idx = notes.findIndex((n) => n.syl && n.s16 >= sl.start16);
-    if (idx < 0) { tail.push(sl); return; }
-    if (!map.has(idx)) map.set(idx, []);
-    map.get(idx).push(sl);
+    const end = sl.start16 + sl.len16;
+    const idx = notes.findIndex((n) => n.syl && n.s16 >= sl.start16 && n.s16 < end);
+    if (idx >= 0) { add(map, idx, sl); return; }
+    let j = -1;
+    for (let q = notes.length - 1; q >= 0; q--) if (notes[q].syl && notes[q].s16 <= sl.start16) { j = q; break; }
+    const nextSyl = notes.findIndex((n) => n.syl && n.s16 >= end);
+    const sung = j >= 0 && notes.some((n, q) => q >= j && (nextSyl < 0 || q < nextSyl) && n.s16 <= sl.start16 && n.s16 + n.d16 > sl.start16);
+    if (sung) add(map, j, sl);
+    else if (nextSyl >= 0) add(pre, nextSyl, sl);
+    else tail.push(sl);
   });
-  return { map, tail };
+  return { map, pre, tail };
 }
 
 function chordButton(sl) {
@@ -772,10 +778,23 @@ function renderBlatt() {
   const hasLyrics = an.lyricLines.length && an.q.notes16.some((n) => n.syl);
   state.marks = [];
   if (hasLyrics) {
-    const { map, tail } = anchorsForSlots();
-    let lineEl = null, lineNo = -1, wordEl = null;
+    const { map, pre, tail } = anchorsForSlots();
+    let lineEl = null, lineNo = -1, wordEl = null, first = true;
     an.q.notes16.forEach((n, i) => {
       if (!n.syl) return;
+      if (pre.has(i)) {
+        const z = document.createElement('div');
+        z.className = 'blatt-zwischen';
+        z.dataset.s16 = pre.get(i)[0].start16;
+        const lab = document.createElement('span');
+        lab.textContent = first ? 'Vorspiel' : 'Zwischenspiel';
+        z.append(lab);
+        pre.get(i).forEach((sl) => z.append(chordButton(sl)));
+        root.append(z);
+        state.marks.push({ s16: pre.get(i)[0].start16, el: z });
+        lineNo = -1;
+      }
+      first = false;
       if (n.syl.line !== lineNo) {
         lineNo = n.syl.line;
         lineEl = document.createElement('div');
@@ -807,11 +826,16 @@ function renderBlatt() {
       wordEl.append(sp);
       state.marks.push({ s16: n.s16, el: sp });
     });
+    root.querySelectorAll('.blatt-zeile').forEach((l) => { if (!l.querySelector('.mit-akkord')) l.classList.add('ohne-akkorde'); });
     if (tail.length) {
       const d = document.createElement('div');
-      d.className = 'blatt-rest';
-      d.append('Danach: ');
-      tail.forEach((sl) => { d.append(chordButton(sl), ' '); });
+      d.className = 'blatt-zwischen';
+      const lab = document.createElement('span');
+      lab.textContent = 'Nachspiel';
+      d.append(lab);
+      tail.forEach((sl) => d.append(chordButton(sl)));
+      d.dataset.s16 = tail[0].start16;
+      state.marks.push({ s16: tail[0].start16, el: d });
       root.append(d);
     }
     if (an.lyr.total < an.lyr.notes) {
@@ -1207,11 +1231,13 @@ function chordSheetText() {
   const out = [state.song.name, `${keyName(an.key)} · ${an.bpm} BPM${capo ? ` · Kapo ${capo}` : ''}`, ''];
   const hasLyrics = an.q.notes16.some((n) => n.syl);
   if (hasLyrics) {
-    const { map, tail } = anchorsForSlots();
-    let chordLine = '', textLine = '', lineNo = -1;
+    const { map, pre, tail } = anchorsForSlots();
+    let chordLine = '', textLine = '', lineNo = -1, first = true;
     const flush = () => { if (textLine || chordLine) { out.push(chordLine.replace(/\s+$/, ''), textLine.replace(/\s+$/, '')); } chordLine = ''; textLine = ''; };
     an.q.notes16.forEach((n, i) => {
       if (!n.syl) return;
+      if (pre.has(i)) { flush(); out.push(`[${first ? 'Vorspiel' : 'Zwischenspiel'}] ` + pre.get(i).map((sl) => gripLabel(sl.chord)).join(' ')); lineNo = -1; }
+      first = false;
       if (n.syl.line !== lineNo) { flush(); lineNo = n.syl.line; }
       const chords = (map.get(i) || []).map((sl) => gripLabel(sl.chord)).join(' ');
       if (chords) {
@@ -1221,7 +1247,7 @@ function chordSheetText() {
       textLine += n.syl.text + (n.syl.wordEnd ? ' ' : '');
     });
     flush();
-    if (tail.length) out.push('', tail.map((sl) => gripLabel(sl.chord)).join(' '));
+    if (tail.length) out.push('[Nachspiel] ' + tail.map((sl) => gripLabel(sl.chord)).join(' '));
   } else {
     const bars = an.q.total16 / an.q.barLen;
     let line = '|';

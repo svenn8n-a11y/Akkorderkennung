@@ -38,7 +38,8 @@ export class Recorder {
     this.rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
     this.rec.ondataavailable = (e) => e.data && e.data.size && this.chunks.push(e.data);
   }
-  start() { this.rec.start(1000); this.startedAt = performance.now(); }
+  start() { this.rec.start(); this.startedAt = performance.now(); }
+  seconds() { return this.startedAt ? (performance.now() - this.startedAt) / 1000 : 0; }
   stop() {
     return new Promise((resolve) => {
       this.rec.onstop = () => resolve(new Blob(this.chunks, { type: this.rec.mimeType || 'audio/mp4' }));
