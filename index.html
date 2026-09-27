@@ -29,10 +29,24 @@
       <div class="rec-zeit" id="recZeit">0:00</div>
       <button class="rec-knopf" id="recKnopf" aria-label="Aufnahme starten"><span></span></button>
       <p class="rec-hinweis" id="recHinweis">Tippen zum Aufnehmen, nochmal tippen zum Beenden.</p>
-      <div class="rec-optionen">
-        <label class="schalter"><input type="checkbox" id="optMetronom"><span>Klick-Metronom beim Singen</span></label>
-        <label class="zahl" id="metroTempoWrap" hidden>Tempo <input type="number" id="optMetroBpm" min="40" max="200" value="90" inputmode="numeric"> BPM</label>
-        <label class="schalter" id="optSpracheWrap" hidden><input type="checkbox" id="optSprache"><span>Text beim Singen mitschreiben (Versuch)</span></label>
+      <div class="metro">
+        <div class="zeile">
+          <label class="schalter"><input type="checkbox" id="optMetronom"><span>Metronom beim Aufnehmen</span></label>
+          <div class="metro-punkte" id="metroPunkte" aria-hidden="true"></div>
+        </div>
+        <div class="metro-einst" id="metroEinst" hidden>
+          <div class="stepper metro-tempo">
+            <button type="button" id="metroMinus" aria-label="Langsamer">−</button>
+            <input type="number" id="metroBpm" min="40" max="220" inputmode="numeric" aria-label="Tempo in BPM">
+            <button type="button" id="metroPlus" aria-label="Schneller">+</button>
+          </div>
+          <span class="metro-einheit">BPM</span>
+          <select id="metroTakt" aria-label="Takt"><option value="4">4/4</option><option value="3">3/4</option></select>
+          <button type="button" class="knopf klein-k" id="metroTap">Tippen</button>
+          <button type="button" class="knopf klein-k" id="metroProbe">Probehören</button>
+          <label class="schalter metro-vor"><input type="checkbox" id="metroVorzaehlen"><span>Einen Takt vorzählen</span></label>
+          <p class="klein">Mit Kopfhörern bleibt der Klick aus der Aufnahme. Mit „Tippen“ gibst du das Tempo im Takt vor.</p>
+        </div>
       </div>
       <label class="datei-knopf">Sprachmemo laden<input type="file" id="dateiLaden" accept="audio/*"></label>
     </section>
@@ -97,6 +111,8 @@
     <p class="kapo" id="kapoInfo"></p>
     <p class="klein tonart-hinweis" id="tonartHinweis" hidden>Transponiert. Noten, Akkorde und die Gitarren-Wiedergabe sind verschoben. Die Originalaufnahme klingt weiter in der gesungenen Tonart.</p>
 
+    <div class="banner" id="textBanner" hidden></div>
+
     <div class="umschalter" role="tablist">
       <button role="tab" id="tabBlatt" aria-selected="true">Akkordblatt</button>
       <button role="tab" id="tabNoten" aria-selected="false">Noten</button>
@@ -112,11 +128,12 @@
         <label class="schalter"><input type="checkbox" id="optSilben" checked><span>Silben automatisch trennen</span></label>
         <button class="knopf" id="textDiktat" hidden>Text sprechen</button>
       </div>
+      <button class="knopf" id="textErkennen">Text aus der Aufnahme erkennen</button>
       <p class="klein" id="textStatus"></p>
       <div class="auto-text" id="autoText" hidden>
-        <p class="klein">Beim Singen erkannt:</p>
+        <p class="klein">Aus der Aufnahme erkannt:</p>
         <blockquote id="autoTextInhalt"></blockquote>
-        <button class="knopf" id="autoTextUebernehmen">Übernehmen</button>
+        <button class="knopf" id="autoTextUebernehmen">Erkannten Text übernehmen</button>
       </div>
     </section>
 
@@ -168,6 +185,7 @@
       </select>
       <label class="tempo">Tempo <output id="speedWert">100 %</output><input type="range" id="speed" min="50" max="150" step="5" value="100"></label>
       <div class="schrift"><button id="schriftKlein" aria-label="Schrift kleiner">A−</button><button id="schriftGross" aria-label="Schrift größer">A+</button></div>
+      <button class="klick-knopf" id="klickKnopf" aria-pressed="false">Klick</button>
     </div>
     <audio id="audioEl" preload="auto" playsinline></audio>
   </main>

@@ -154,7 +154,7 @@ export function alignOrigin(notes, bpm, grid) {
   return t0;
 }
 
-export function quantize(notes, bpm, t0, grid, shiftBeats, meter) {
+export function quantize(notes, bpm, t0, grid, shiftBeats, meter, barOrigin = null) {
   const per16 = grid === 16 ? 1 : 2;
   const unit = 60 / bpm / (grid === 16 ? 4 : 2);
   const q = [];
@@ -167,11 +167,12 @@ export function quantize(notes, bpm, t0, grid, shiftBeats, meter) {
       if (s <= p.s) { if (e - s > p.e - p.s) { p.midi = n.midi; } p.e = Math.max(p.e, e); continue; }
       if (p.e > s) p.e = s;
     }
-    q.push({ s, e, midi: n.midi });
+    q.push({ s, e, midi: n.midi, t: n.start, te: n.end });
   }
-  const base = q.length ? q[0].s : 0;
+  const base = barOrigin !== null ? Math.round((barOrigin - t0) / unit) : q.length ? q[0].s : 0;
+  const kept = q.filter((x) => x.s >= base);
   const shift16 = shiftBeats * 4;
-  const out = q.map((x) => ({ s16: (x.s - base) * per16 + shift16, d16: (x.e - x.s) * per16, midi: x.midi }));
+  const out = kept.map((x) => ({ s16: (x.s - base) * per16 + shift16, d16: (x.e - x.s) * per16, midi: x.midi, t: x.t, te: x.te }));
   const barLen = meter * 4;
   const last = out.length ? out[out.length - 1].s16 + out[out.length - 1].d16 : barLen;
   const total16 = Math.max(barLen, Math.ceil(last / barLen) * barLen);
@@ -360,6 +361,50 @@ export function parseLyrics(text, autoSplit) {
   return lines;
 }
 
+export function lyricWords(lines) {
+  const words = [];
+  lines.forEach((l, li) => l.forEach((t) => {
+    if (t.wordStart || !words.length) words.push({ syl: [], line: li });
+    words[words.length - 1].syl.push(t.text);
+  }));
+  return words;
+}
+
+export function assignTimedLyrics(notes16, lines, timed) {
+  const words = lyricWords(lines);
+  notes16.forEach((n) => { n.syl = null; });
+  let last = -1, placed = 0;
+  words.forEach((w, wi) => {
+    const ts = timed[wi].start, te = Math.max(timed[wi].end, ts + 0.05);
+    let cands = [];
+    for (let j = last + 1; j < notes16.length; j++) {
+      const t = notes16[j].t;
+      if (t >= te - 0.03) break;
+      if (t >= ts - 0.12) cands.push(j);
+    }
+    if (!cands.length) {
+      const j = notes16.findIndex((n, k) => k > last && n.t >= ts - 0.3);
+      if (j >= 0 && notes16[j].t < te + 0.5) cands = [j];
+    }
+    if (!cands.length) {
+      if (last >= 0 && notes16[last].syl) {
+        const prev = notes16[last].syl;
+        notes16[last].syl = { ...prev, text: prev.text + (prev.wordEnd ? ' ' : '') + w.syl.join(''), wordEnd: true };
+        placed++;
+      }
+      return;
+    }
+    const k = cands.length;
+    const groups = w.syl.length <= k ? w.syl.map((x) => [x]) : [...w.syl.slice(0, k - 1).map((x) => [x]), w.syl.slice(k - 1)];
+    groups.forEach((g, gi) => {
+      notes16[cands[gi]].syl = { text: g.join(''), wordStart: gi === 0, wordEnd: gi === groups.length - 1, line: w.line };
+    });
+    placed++;
+    last = cands[k - 1];
+  });
+  return { used: notes16.filter((n) => n.syl).length, total: words.length, notes: notes16.length, timed: true, placed };
+}
+
 export function assignLyrics(notes16, lines) {
   const flat = [];
   lines.forEach((l, li) => l.forEach((t) => flat.push({ ...t, line: li })));
@@ -466,7 +511,7 @@ export function buildAbc({ events, q, slots, key, meter, bpm, barsPerLine, octav
   return header.concat(lines.filter(Boolean)).join('\n');
 }
 
-export function analyse(track, settings) {
+export function analyse(track, settings, timedWords = null) {
   const { notes: raw, offset } = extractNotes(track);
   const tr = settings.transpose || 0;
   const notes = raw.map((n) => ({ ...n, midi: n.midi + tr }));
@@ -475,7 +520,8 @@ export function analyse(track, settings) {
   const grid = settings.grid || 8;
   const meter = settings.meter || 4;
   const t0 = settings.bpm ? alignOrigin(notes, bpm, grid) : tempo.t0;
-  const q = quantize(notes, bpm, t0, grid, settings.shiftBeats || 0, meter);
+  const barOrigin = Number.isFinite(settings.barOrigin) ? settings.barOrigin : null;
+  const q = quantize(notes, bpm, t0, grid, settings.shiftBeats || 0, meter, barOrigin);
   const keyAuto = detectKey(q.notes16);
   const key = settings.key ? { tonic: mod12(settings.key.tonic + tr), mode: settings.key.mode } : keyAuto;
   const overrides = {};
@@ -486,7 +532,10 @@ export function analyse(track, settings) {
   const perBar = meter === 3 ? 1 : settings.perBar || 2;
   const slots = suggestChords(q, key, perBar, overrides);
   const lyricLines = parseLyrics(settings.lyrics || '', settings.autoSplit !== false);
-  const lyr = assignLyrics(q.notes16, lyricLines);
+  const nWords = lyricWords(lyricLines).length;
+  const lyr = timedWords && timedWords.length && nWords === timedWords.length
+    ? assignTimedLyrics(q.notes16, lyricLines, timedWords)
+    : { ...assignLyrics(q.notes16, lyricLines), mismatch: !!(timedWords && timedWords.length && nWords) };
   const events = buildEvents(q);
   const pitches = q.notes16.map((n) => n.midi);
   const medianPitch = pitches.length ? median(pitches) : 67;

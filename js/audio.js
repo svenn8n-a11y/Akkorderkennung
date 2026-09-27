@@ -164,7 +164,7 @@ const STRINGS = [40, 45, 50, 55, 59, 64];
 export class Player {
   constructor() { this.nodes = []; this.playing = false; }
 
-  playSynth({ events, slots, sec16, fromS16 = 0, speed = 1, melody = true, chords = true, meterLen = 16, onEnd }) {
+  playSynth({ events, slots, sec16, fromS16 = 0, speed = 1, melody = true, chords = true, click = false, barLen = 16, onEnd }) {
     this.stop();
     const c = audioCtx();
     const master = c.createGain();
@@ -218,6 +218,9 @@ export class Player {
       }
     }
     const endS16 = Math.max(...events.map((e) => e.s16 + e.d16), fromS16);
+    if (click) {
+      for (let b = Math.ceil(fromS16 / 4) * 4; b < endS16; b += 4) this.nodes.push(metronomeClick(at(b), b % barLen === 0, master));
+    }
     this.playing = true;
     this.pos = () => fromS16 + (c.currentTime - t0) / step;
     this.timer = setTimeout(() => { this.stop(); onEnd && onEnd(); }, (at(endS16) - c.currentTime + 0.3) * 1000);
@@ -248,16 +251,25 @@ export class Player {
   }
 }
 
-export function metronomeClick(time, accent) {
+let clickBuf = null;
+export function metronomeClick(time, accent, dest) {
   const c = audioCtx();
-  const o = c.createOscillator();
+  if (!clickBuf) {
+    clickBuf = c.createBuffer(1, Math.floor(c.sampleRate * 0.03), c.sampleRate);
+    const d = clickBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (c.sampleRate * 0.004));
+  }
+  const src = c.createBufferSource();
+  src.buffer = clickBuf;
+  const f = c.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.value = accent ? 3200 : 2200;
+  f.Q.value = 1.2;
   const g = c.createGain();
-  o.frequency.value = accent ? 1600 : 1100;
-  g.gain.setValueAtTime(0.25, time);
-  g.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-  o.connect(g).connect(c.destination);
-  o.start(time);
-  o.stop(time + 0.06);
+  g.gain.value = accent ? 1.6 : 1.0;
+  src.connect(f).connect(g).connect(dest || c.destination);
+  src.start(time);
+  return src;
 }
 
 function vlq(n) {

@@ -3,6 +3,7 @@ import { toMono16k, trackPitch } from './pitch.js';
 import { analyse, buildAbc } from './analyse.js';
 import { midiName, keyName, chordName, chordKey, allKeys, setGermanNames, pcName, guitarChordName, mod12 } from './musik.js';
 import { diagramSvg, bestCapo } from './gitarre.js';
+import { transcribe, cleanWords, wordsToText } from './transkript.js';
 import { listSongs, getSong, saveSong, deleteSong, persist, pref, setPref } from './speicher.js';
 
 const $ = (id) => document.getElementById(id);
@@ -103,6 +104,91 @@ function drawTrail(canvas, points, windowSec) {
   g.stroke();
 }
 
+/* Metronom */
+
+const metroState = { on: pref('metroAn', false), bpm: pref('metroBpm', 90), meter: pref('metroMeter', 4), countIn: pref('metroVorzaehlen', true), id: null, beat: 0, next: 0, taps: [] };
+
+function renderMetro() {
+  $('optMetronom').checked = metroState.on;
+  $('metroEinst').hidden = !metroState.on;
+  $('metroBpm').value = metroState.bpm;
+  $('metroTakt').value = String(metroState.meter);
+  $('metroVorzaehlen').checked = metroState.countIn;
+  const dots = $('metroPunkte');
+  if (dots.children.length !== metroState.meter) {
+    dots.innerHTML = '';
+    for (let i = 0; i < metroState.meter; i++) dots.append(document.createElement('span'));
+  }
+}
+
+function flashBeat(beatInBar, when) {
+  const c = audioCtx();
+  setTimeout(() => {
+    [...$('metroPunkte').children].forEach((d, i) => d.classList.toggle('an', i === beatInBar));
+  }, Math.max(0, (when - c.currentTime) * 1000));
+}
+
+function metroStart(onDownbeat) {
+  metroStop();
+  const c = audioCtx();
+  metroState.next = c.currentTime + 0.12;
+  metroState.beat = 0;
+  metroState.id = setInterval(() => {
+    const spb = 60 / metroState.bpm;
+    while (metroState.next < c.currentTime + 0.2) {
+      const inBar = metroState.beat % metroState.meter;
+      metronomeClick(metroState.next, inBar === 0);
+      flashBeat(inBar, metroState.next);
+      if (onDownbeat) onDownbeat(metroState.beat, metroState.next);
+      metroState.next += spb;
+      metroState.beat++;
+    }
+  }, 25);
+}
+
+function metroStop() {
+  clearInterval(metroState.id);
+  metroState.id = null;
+  [...$('metroPunkte').children].forEach((d) => d.classList.remove('an'));
+}
+
+function setMetro(changes) {
+  Object.assign(metroState, changes);
+  metroState.bpm = Math.min(220, Math.max(40, Math.round(metroState.bpm)));
+  setPref('metroBpm', metroState.bpm);
+  setPref('metroMeter', metroState.meter);
+  setPref('metroVorzaehlen', metroState.countIn);
+  renderMetro();
+  if (metroState.id && !rec) metroStart();
+}
+
+$('optMetronom').addEventListener('change', (e) => {
+  metroState.on = e.target.checked;
+  setPref('metroAn', metroState.on);
+  if (!metroState.on && !rec) { metroStop(); $('metroProbe').textContent = 'Probehören'; }
+  renderMetro();
+});
+$('metroProbe').addEventListener('click', () => {
+  if (rec) return;
+  if (metroState.id) { metroStop(); $('metroProbe').textContent = 'Probehören'; }
+  else { metroStart(); $('metroProbe').textContent = 'Stopp'; }
+});
+$('metroBpm').addEventListener('change', (e) => setMetro({ bpm: +e.target.value || 90 }));
+$('metroMinus').addEventListener('click', () => setMetro({ bpm: metroState.bpm - 1 }));
+$('metroPlus').addEventListener('click', () => setMetro({ bpm: metroState.bpm + 1 }));
+$('metroTakt').addEventListener('change', (e) => setMetro({ meter: +e.target.value }));
+$('metroVorzaehlen').addEventListener('change', (e) => setMetro({ countIn: e.target.checked }));
+$('metroTap').addEventListener('click', () => {
+  const now = performance.now();
+  metroState.taps = metroState.taps.filter((t) => now - t < 2500);
+  metroState.taps.push(now);
+  if (metroState.taps.length >= 3) {
+    const d = metroState.taps.slice(1).map((t, i) => t - metroState.taps[i]);
+    setMetro({ bpm: 60000 / (d.reduce((a, b) => a + b, 0) / d.length) });
+  }
+});
+renderMetro();
+
 /* Aufnahme */
 
 let rec = null;
@@ -113,19 +199,43 @@ async function startRecording() {
     const stream = await openMic();
     const live = new LiveInput(stream);
     const recorder = new Recorder(stream);
-    rec = { stream, live, recorder, points: [], t0: performance.now(), speech: '' };
-    recorder.start();
+    rec = { stream, live, recorder, points: [], t0: performance.now(), started: false };
     try { rec.wake = await navigator.wakeLock?.request('screen'); } catch (e) { /* ohne Wachhalten */ }
-    if ($('optMetronom').checked) startMetronome(+$('optMetroBpm').value || 90);
-    if (SR && $('optSprache').checked) rec.sr = startSpeech((text) => (rec && (rec.speech = text)));
     $('recKnopf').classList.add('laeuft');
     $('recKnopf').setAttribute('aria-label', 'Aufnahme beenden');
-    $('recHinweis').textContent = 'Aufnahme läuft. Tippen zum Beenden.';
+    if (metroState.on) {
+      rec.metro = { bpm: metroState.bpm, meter: metroState.meter };
+      const countBeats = metroState.countIn ? metroState.meter : 0;
+      const c = audioCtx();
+      metroStart((beat, when) => {
+        if (!rec || rec.started) return;
+        const wait = Math.max(0, (when - c.currentTime) * 1000);
+        if (beat < countBeats) {
+          setTimeout(() => { if (rec && !rec.started) { $('recNote').textContent = String(countBeats - beat); $('recCents').textContent = 'Vorzählen …'; } }, wait);
+        } else if (beat === countBeats) {
+          rec.started = true;
+          setTimeout(() => beginRecording(), wait);
+        }
+      });
+      $('recHinweis').textContent = countBeats ? 'Ein Takt Vorzählen, dann läuft die Aufnahme.' : 'Aufnahme startet mit dem nächsten Schlag.';
+    } else {
+      beginRecording();
+    }
     loopRecording();
   } catch (err) {
     rec = null;
     micError(err);
   }
+}
+
+function beginRecording() {
+  if (!rec) return;
+  rec.started = true;
+  rec.recorder.start();
+  rec.t0 = performance.now();
+  $('recHinweis').textContent = 'Aufnahme läuft. Tippen zum Beenden.';
+  $('recNote').textContent = '–';
+  $('recCents').textContent = 'Sing einfach los';
 }
 
 function micError(err) {
@@ -142,34 +252,24 @@ function loopRecording() {
   const now = performance.now() / 1000;
   rec.points.push({ t: now, midi: p.midi });
   if (rec.points.length > 1200) rec.points.splice(0, 200);
-  if (p.midi !== null) {
+  if (p.midi !== null && rec.recorder.rec.state === 'recording') {
     const r = Math.round(p.midi);
     $('recNote').textContent = midiName(r);
     const c = Math.round((p.midi - r) * 100);
     $('recCents').textContent = c === 0 ? 'genau' : `${c > 0 ? '+' : ''}${c} Cent`;
   }
-  $('recZeit').textContent = fmtTime((performance.now() - rec.t0) / 1000);
+  if (rec.recorder.rec.state === 'recording') $('recZeit').textContent = fmtTime((performance.now() - rec.t0) / 1000);
   drawTrail($('recSpur'), rec.points, 8);
   rec.raf = requestAnimationFrame(loopRecording);
 }
-
-let metro = null;
-function startMetronome(bpm) {
-  const c = audioCtx();
-  let next = c.currentTime + 0.1, beat = 0;
-  metro = { bpm, id: setInterval(() => {
-    while (next < c.currentTime + 0.2) { metronomeClick(next, beat % 4 === 0); next += 60 / bpm; beat++; }
-  }, 25) };
-}
-function stopMetronome() { if (metro) clearInterval(metro.id); const b = metro?.bpm; metro = null; return b; }
 
 async function stopRecording() {
   const r = rec;
   rec = null;
   cancelAnimationFrame(r.raf);
-  const bpm = stopMetronome();
-  if (r.sr) r.sr.stop();
-  const blob = await r.recorder.stop();
+  metroStop();
+  const recording = r.recorder.rec.state === 'recording';
+  const blob = recording ? await r.recorder.stop() : null;
   r.live.close();
   stopStream(r.stream);
   try { await r.wake?.release(); } catch (e) { /* schon freigegeben */ }
@@ -179,12 +279,12 @@ async function stopRecording() {
   $('recNote').textContent = '–';
   $('recCents').textContent = 'Sing einfach los';
   $('recZeit').textContent = '0:00';
-  await processAudio(blob, { bpm: bpm || null, lyricsAuto: r.speech || '' });
+  $('metroProbe').textContent = 'Probehören';
+  if (!blob) return;
+  await processAudio(blob, r.metro ? { bpm: r.metro.bpm, meter: r.metro.meter, barOrigin: 0 } : {});
 }
 
 $('recKnopf').addEventListener('click', () => (rec ? stopRecording() : startRecording()));
-$('optMetronom').addEventListener('change', (e) => ($('metroTempoWrap').hidden = !e.target.checked));
-if (SR) $('optSpracheWrap').hidden = false;
 
 $('dateiLaden').addEventListener('change', async (e) => {
   const f = e.target.files[0];
@@ -212,6 +312,9 @@ async function processAudio(blob, extra = {}) {
     const mono = await toMono16k(buf);
     const track = await trackPitch(mono, (f) => overlay('Melodie wird ausgewertet …', f));
     const now = Date.now();
+    const settings = { bpm: extra.bpm || null, lyrics: '', autoSplit: true, overrides: {} };
+    if (extra.meter) settings.meter = extra.meter;
+    if (Number.isFinite(extra.barOrigin)) settings.barOrigin = extra.barOrigin;
     const song = {
       id: 's' + now,
       name: extra.name || 'Idee ' + fmtDate(now),
@@ -220,8 +323,7 @@ async function processAudio(blob, extra = {}) {
       audio: blob,
       mime: blob.type || 'audio/mp4',
       track,
-      settings: { bpm: extra.bpm || null, lyrics: '', autoSplit: true, overrides: {} },
-      lyricsAuto: extra.lyricsAuto || '',
+      settings,
     };
     const an = analyse(track, song.settings);
     song.meta = meta(an);
@@ -229,11 +331,97 @@ async function processAudio(blob, extra = {}) {
     persist();
     overlay(null);
     if (!an.notes.length) toast('Keine Töne erkannt. Die Aufnahme ist trotzdem gespeichert. Näher ans Mikro und etwas lauter singen.', 6000);
-    openSong(song.id);
+    await openSong(song.id);
+    if (an.notes.length && pref('textAuto', true)) startTranscription(song, mono);
   } catch (err) {
     overlay(null);
     toast('Die Aufnahme ließ sich nicht auswerten: ' + (err?.message || err), 6000);
   }
+}
+
+/* Texterkennung */
+
+const tx = { running: null };
+
+function textBanner(html, buttons = []) {
+  const b = $('textBanner');
+  b.hidden = html === null;
+  if (html === null) return;
+  b.innerHTML = '';
+  const p = document.createElement('div');
+  p.className = 'banner-text';
+  p.innerHTML = html;
+  b.append(p);
+  if (buttons.length) {
+    const row = document.createElement('div');
+    row.className = 'banner-knoepfe';
+    buttons.forEach(([label, fn, cls]) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'knopf' + (cls ? ' ' + cls : '');
+      btn.textContent = label;
+      btn.addEventListener('click', fn);
+      row.append(btn);
+    });
+    b.append(row);
+  }
+}
+
+function bannerProgress(label, frac) {
+  textBanner(`<b>${label}</b><div class="balken"><div style="width:${frac === null ? 100 : Math.round(frac * 100)}%" class="${frac === null ? 'laeuft' : ''}"></div></div>`);
+}
+
+async function startTranscription(song, mono = null, force = false, replace = false) {
+  if (tx.running) return;
+  if (!pref('modellGeladen', false) && !force) {
+    textBanner('Soll die App den gesungenen Text erkennen? Dafür lädt sie <b>einmalig ein Sprachmodell (ca. 77 MB)</b>, am besten im WLAN. Danach funktioniert es ohne Download.',
+      [['Jetzt laden und erkennen', () => startTranscription(song, mono, true, replace), 'haupt'], ['Später', () => textBanner(null)]]);
+    return;
+  }
+  tx.running = song.id;
+  try {
+    if (!mono) {
+      bannerProgress('Aufnahme wird vorbereitet …', null);
+      mono = await toMono16k(await decode(await song.audio.arrayBuffer()));
+    }
+    bannerProgress(pref('modellGeladen', false) ? 'Sprachmodell wird gestartet …' : 'Sprachmodell wird geladen …', pref('modellGeladen', false) ? null : 0);
+    const words = await transcribe(mono, (st) => {
+      if (st.phase === 'laden' && !pref('modellGeladen', false)) bannerProgress('Sprachmodell wird geladen (einmalig) …', (st.progress || 0) / 100);
+      if (st.phase === 'geladen') setPref('modellGeladen', true);
+      if (st.phase === 'erkennen') bannerProgress('Text wird erkannt …', null);
+    });
+    const fresh = await getSong(song.id);
+    if (!fresh) return;
+    const an = analyse(fresh.track, fresh.settings);
+    const clean = cleanWords(words, an.notes);
+    fresh.words = clean;
+    fresh.wordsText = wordsToText(clean);
+    const target = state.song && state.song.id === fresh.id ? state.song : fresh;
+    target.words = fresh.words;
+    target.wordsText = fresh.wordsText;
+    if (replace || !target.settings.lyrics || !target.settings.lyrics.trim()) target.settings.lyrics = fresh.wordsText;
+    await saveSong(target);
+    if (state.song && state.song.id === fresh.id) {
+      $('songText').value = target.settings.lyrics;
+      recompute();
+      showRecognized();
+    }
+    textBanner(null);
+    if (!clean.length) toast('Im Gesang wurde kein Text erkannt. Du kannst ihn im Reiter „Text“ eintragen.', 5000);
+    else toast(`${clean.length} Wörter erkannt und eingesetzt.`, 2500);
+  } catch (err) {
+    textBanner(`Die Texterkennung hat nicht geklappt: ${String(err?.message || err).slice(0, 140)}`,
+      [['Nochmal versuchen', () => { tx.running = null; startTranscription(song, null, true, replace); }], ['Schließen', () => textBanner(null)]]);
+  } finally {
+    tx.running = null;
+  }
+}
+
+function showRecognized() {
+  const s = state.song;
+  const differs = s.wordsText && s.settings.lyrics.trim() !== s.wordsText.trim();
+  $('autoText').hidden = !differs;
+  $('autoTextInhalt').textContent = s.wordsText || '';
 }
 
 function meta(an) {
@@ -290,8 +478,9 @@ async function openSong(id) {
   $('songName').value = song.name;
   $('songText').value = song.settings.lyrics || '';
   $('optSilben').checked = song.settings.autoSplit !== false;
-  $('autoText').hidden = !song.lyricsAuto;
-  $('autoTextInhalt').textContent = song.lyricsAuto || '';
+  showRecognized();
+  textBanner(null);
+  if (tx.running === song.id) bannerProgress('Text wird erkannt …', null);
   $('textDiktat').hidden = !SR;
   $('loeschenFrage').hidden = true;
   $('songEinst').open = false;
@@ -303,7 +492,7 @@ async function openSong(id) {
 
 function recompute() {
   const s = state.song;
-  state.an = analyse(s.track, s.settings);
+  state.an = analyse(s.track, s.settings, s.words);
   s.meta = meta(state.an);
   renderSong();
 }
@@ -461,8 +650,12 @@ function anchorsForSlots() {
     const changed = k !== prev;
     prev = k;
     if (!changed) return;
-    const idx = notes.findIndex((n) => n.s16 >= sl.start16);
-    if (idx < 0 || !notes[idx].syl) { tail.push(sl); return; }
+    let idx = notes.findIndex((n) => n.syl && n.s16 >= sl.start16 && n.s16 < sl.start16 + sl.len16);
+    if (idx < 0) {
+      for (let j = notes.length - 1; j >= 0; j--) if (notes[j].syl && notes[j].s16 <= sl.start16) { idx = j; break; }
+    }
+    if (idx < 0) idx = notes.findIndex((n) => n.syl && n.s16 >= sl.start16);
+    if (idx < 0) { tail.push(sl); return; }
     if (!map.has(idx)) map.set(idx, []);
     map.get(idx).push(sl);
   });
@@ -691,19 +884,27 @@ $('songText').addEventListener('input', (e) => {
 $('optSilben').addEventListener('change', (e) => { state.song.settings.autoSplit = e.target.checked; recompute(); saveSoon(); });
 $('autoTextUebernehmen').addEventListener('click', () => {
   const t = $('songText');
-  t.value = (t.value ? t.value + '\n' : '') + state.song.lyricsAuto;
+  t.value = state.song.wordsText || '';
   t.dispatchEvent(new Event('input'));
 });
 
 function renderTextStatus() {
   const l = state.an.lyr;
   let msg = '';
-  if (!l.total) msg = `Die Melodie hat ${l.notes} Töne. Jede Silbe bekommt einen Ton.`;
+  if (l.timed) msg = `Text nach Zeit zugeordnet: ${l.total} Wörter liegen auf den Tönen, auf denen du sie gesungen hast. Einzelne Wörter kannst du hier korrigieren, die Zuordnung bleibt erhalten, solange die Zahl der Wörter gleich bleibt.`;
+  else if (l.mismatch) msg = `Du hast Wörter hinzugefügt oder entfernt. Deshalb verteilt die App die Silben jetzt der Reihe nach auf die Töne. Mit „Erkannten Text übernehmen“ kommt die Zeitzuordnung zurück.`;
+  else if (!l.total) msg = `Die Melodie hat ${l.notes} Töne. Jede Silbe bekommt einen Ton.`;
   else if (l.total === l.notes) msg = `${l.total} Silben passen genau auf ${l.notes} Töne.`;
   else if (l.total < l.notes) msg = `${l.total} Silben auf ${l.notes} Töne verteilt, ${l.notes - l.total} Töne sind noch ohne Text.`;
   else msg = `${l.total - l.notes} Silben mehr als Töne. Die überzähligen erscheinen nicht, dann Silben zusammenfassen (Bindestrich weglassen).`;
   $('textStatus').textContent = msg;
+  $('textErkennen').textContent = state.song.words ? 'Text neu erkennen' : 'Text aus der Aufnahme erkennen';
 }
+
+$('textErkennen').addEventListener('click', () => {
+  if (tx.running) { toast('Die Texterkennung läuft schon.'); return; }
+  startTranscription(state.song, null, pref('modellGeladen', false), true);
+});
 
 function startSpeech(onText) {
   const r = new SR();
@@ -764,14 +965,16 @@ function startPlayback(from = state.startS16) {
   const an = state.an, mode = $('spielModus').value;
   const sec16 = an.q.sec16;
   const onEnd = () => { stopPlayback(); state.startS16 = 0; };
+  const click = $('klickKnopf').getAttribute('aria-pressed') === 'true';
+  const barLen = an.q.barLen;
   if (mode === 'original' || mode === 'original+akkorde') {
-    if (mode === 'original+akkorde') chordPlayer.playSynth({ events: an.events, slots: an.slots, sec16, fromS16: from, speed: speed(), melody: false, chords: true });
+    if (mode === 'original+akkorde' || click) chordPlayer.playSynth({ events: an.events, slots: an.slots, sec16, fromS16: from, speed: speed(), melody: false, chords: mode === 'original+akkorde', click, barLen });
     player.playOriginal({
       audioEl: $('audioEl'), originSec: an.q.originSec, sec16, fromS16: from, speed: speed(), onEnd,
       onError: () => { stopPlayback(); toast('Die Aufnahme ließ sich nicht abspielen. Nochmal auf Abspielen tippen.'); },
     });
   } else {
-    player.playSynth({ events: an.events, slots: an.slots, sec16, fromS16: from, speed: speed(), melody: mode === 'beides', chords: true, onEnd });
+    player.playSynth({ events: an.events, slots: an.slots, sec16, fromS16: from, speed: speed(), melody: mode === 'beides', chords: true, click, barLen, onEnd });
   }
   $('spielKnopf').textContent = '■';
   $('spielKnopf').setAttribute('aria-label', 'Stoppen');
@@ -804,6 +1007,13 @@ function seekTo(s16) {
 $('spielKnopf').addEventListener('click', () => {
   if (player.playing || chordPlayer.playing) { state.startS16 = currentPos(); stopPlayback(); }
   else startPlayback();
+});
+$('klickKnopf').setAttribute('aria-pressed', String(pref('klick', false)));
+$('klickKnopf').addEventListener('click', () => {
+  const on = $('klickKnopf').getAttribute('aria-pressed') !== 'true';
+  $('klickKnopf').setAttribute('aria-pressed', String(on));
+  setPref('klick', on);
+  if (player.playing || chordPlayer.playing) startPlayback(currentPos());
 });
 $('spielModus').addEventListener('change', () => { if (player.playing || chordPlayer.playing) startPlayback(currentPos()); });
 
