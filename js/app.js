@@ -484,28 +484,28 @@ function closeSwipes(except) {
 }
 
 function attachSwipe(li, content) {
-  let x0 = 0, y0 = 0, dx = 0, mode = null, base = 0, id = null;
-  content.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    id = e.pointerId; x0 = e.clientX; y0 = e.clientY; dx = 0; mode = null;
+  let x0 = 0, y0 = 0, dx = 0, mode = null, base = 0, active = false;
+  const begin = (x, y) => {
+    x0 = x; y0 = y; dx = 0; mode = null; active = true;
     base = li.classList.contains('offen') ? -SWIPE_W : 0;
     delete li.dataset.gewischt;
-  });
-  content.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== id) return;
-    const mx = e.clientX - x0, my = e.clientY - y0;
+  };
+  const move = (x, y, e) => {
+    if (!active) return;
+    const mx = x - x0, my = y - y0;
     if (!mode) {
       if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
       mode = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
-      if (mode === 'x') { content.setPointerCapture(id); closeSwipes(li); li.classList.add('zieht'); }
+      if (mode === 'x') { closeSwipes(li); li.classList.add('zieht'); }
     }
     if (mode !== 'x') return;
+    if (e.cancelable) e.preventDefault();
     dx = Math.max(-SWIPE_W * 1.4, Math.min(0, base + mx));
     content.style.transform = `translateX(${dx}px)`;
-  });
-  const end = (e) => {
-    if (e.pointerId !== id) return;
-    id = null;
+  };
+  const finish = () => {
+    if (!active) return;
+    active = false;
     li.classList.remove('zieht');
     if (mode !== 'x') return;
     li.dataset.gewischt = '1';
@@ -514,8 +514,17 @@ function attachSwipe(li, content) {
     li.classList.toggle('offen', open);
     content.style.transform = open ? `translateX(${-SWIPE_W}px)` : '';
   };
-  content.addEventListener('pointerup', end);
-  content.addEventListener('pointercancel', end);
+  if ('ontouchstart' in window) {
+    content.addEventListener('touchstart', (e) => begin(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+    content.addEventListener('touchmove', (e) => move(e.touches[0].clientX, e.touches[0].clientY, e), { passive: false });
+    content.addEventListener('touchend', finish);
+    content.addEventListener('touchcancel', finish);
+  } else {
+    content.addEventListener('pointerdown', (e) => { if (e.button === 0) { begin(e.clientX, e.clientY); content.setPointerCapture(e.pointerId); } });
+    content.addEventListener('pointermove', (e) => move(e.clientX, e.clientY, e));
+    content.addEventListener('pointerup', finish);
+    content.addEventListener('pointercancel', finish);
+  }
 }
 
 let undoTimer = null;
@@ -545,7 +554,9 @@ async function deleteWithUndo(song) {
   undoTimer = setTimeout(() => (t.hidden = true), 6000);
 }
 
-document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#songListe li.offen')) closeSwipes(); });
+const closeOutside = (e) => { if (!e.target.closest('#songListe li.offen')) closeSwipes(); };
+document.addEventListener('touchstart', closeOutside, { passive: true });
+document.addEventListener('mousedown', closeOutside);
 
 $('optDeutsch').checked = pref('deutsch', false);
 $('optDeutsch').addEventListener('change', (e) => {
