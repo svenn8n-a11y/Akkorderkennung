@@ -60,7 +60,10 @@
       <summary>Einstellungen</summary>
       <label class="schalter"><input type="checkbox" id="optDeutsch"><span>Deutsche Tonnamen (H statt B)</span></label>
       <label class="zeile-wahl">Sprachmodell für die Texterkennung
-        <select id="optModell"><option value="gross">Groß (77 MB, genauer)</option><option value="klein">Klein (41 MB, schneller)</option></select>
+        <select id="optModell"><option value="small">Groß, für Lieder (250 MB, braucht viel Speicher)</option><option value="base">Mittel (77 MB)</option><option value="tiny">Klein (41 MB, schneller, ungenauer)</option></select>
+      </label>
+      <label class="zeile-wahl">Sprache des Gesangs
+        <select id="optSprache"><option value="auto">Automatisch (Deutsch, Türkisch, Englisch)</option><option value="de">Deutsch</option><option value="tr">Türkisch</option><option value="en">Englisch</option></select>
       </label>
       <p class="klein" id="speicherInfo"></p>
     </details>
@@ -131,6 +134,9 @@
         <label class="schalter"><input type="checkbox" id="optSilben" checked><span>Silben automatisch trennen</span></label>
         <button class="knopf" id="textDiktat" hidden>Text sprechen</button>
       </div>
+      <label class="zeile-wahl">Sprache dieser Aufnahme
+        <select id="textSprache"><option value="auto">Automatisch</option><option value="de">Deutsch</option><option value="tr">Türkisch</option><option value="en">Englisch</option></select>
+      </label>
       <button class="knopf" id="textErkennen">Text aus der Aufnahme erkennen</button>
       <p class="klein" id="textStatus"></p>
       <div class="auto-text" id="autoText" hidden>

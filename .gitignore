@@ -1,2 +1,6 @@
 _test/
 .DS_Store
+werkzeug/.venv/
+werkzeug/node_modules/
+werkzeug/.modelle/
+werkzeug/.tmp/

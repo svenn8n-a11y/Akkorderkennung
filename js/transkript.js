@@ -1,7 +1,10 @@
 export const MODELS = {
-  gross: { id: 'onnx-community/whisper-base_timestamped', mb: 77 },
-  klein: { id: 'onnx-community/whisper-tiny_timestamped', mb: 41 },
+  small: { id: 'onnx-community/whisper-small_timestamped', mb: 250, name: 'groß, für Lieder', next: 'base' },
+  base: { id: 'onnx-community/whisper-base_timestamped', mb: 77, name: 'mittel', next: 'tiny' },
+  tiny: { id: 'onnx-community/whisper-tiny_timestamped', mb: 41, name: 'klein', next: null },
 };
+
+export const LANGUAGES = { auto: 'Automatisch', de: 'Deutsch', tr: 'Türkisch', en: 'Englisch' };
 
 let worker = null;
 let seq = 0;
@@ -32,7 +35,8 @@ function getWorker() {
       if (m.type === 'laden') job.onStatus({ phase: 'laden', progress: m.progress });
       else if (m.type === 'geladen') { job.onStatus({ phase: 'geladen' }); if (job.onlyLoad) done(() => job.resolve(null)); }
       else if (m.type === 'erkennen') job.onStatus({ phase: 'erkennen', progress: m.progress });
-      else if (m.type === 'fertig') done(() => job.resolve(m.words));
+      else if (m.type === 'sprache') job.onStatus({ phase: 'sprache', code: m.code });
+      else if (m.type === 'fertig') done(() => job.resolve({ words: m.words, code: m.code }));
       else if (m.type === 'fehler') done(() => job.reject(new Error(m.message)));
     };
     worker.onerror = (e) => kill('Texterkennung abgestürzt: ' + (e.message || 'unbekannter Fehler'));
@@ -41,14 +45,14 @@ function getWorker() {
   return worker;
 }
 
-export function transcribe(samples16k, model, onStatus = () => {}) {
+export function transcribe(samples16k, model, language, onStatus = () => {}) {
   return new Promise((resolve, reject) => {
     const id = ++seq;
     const job = { resolve, reject, onStatus };
     jobs.set(id, job);
     arm(job);
     const copy = new Float32Array(samples16k);
-    try { getWorker().postMessage({ id, audio: copy, model }, [copy.buffer]); }
+    try { getWorker().postMessage({ id, audio: copy, model, language }, [copy.buffer]); }
     catch (err) { kill('Texterkennung ließ sich nicht starten: ' + err.message); }
   });
 }

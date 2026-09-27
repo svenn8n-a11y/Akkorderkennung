@@ -305,7 +305,7 @@ export function suggestChords(q, key, perBar, overrides = {}) {
   });
 }
 
-const VOWELS = 'aeiouäöüyAEIOUÄÖÜY';
+const VOWELS = 'aeiouäöüyıâîûAEIOUÄÖÜYIÂÎÛİ';
 const GROUPS = ['sch', 'ch', 'ck', 'ph', 'qu', 'th'];
 function isVowel(c) { return VOWELS.includes(c); }
 

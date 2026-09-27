@@ -3,7 +3,7 @@ import { toMono16k, trackPitch, normalize } from './pitch.js';
 import { analyse, buildAbc } from './analyse.js';
 import { midiName, keyName, chordName, chordKey, allKeys, setGermanNames, pcName, guitarChordName, mod12 } from './musik.js';
 import { diagramSvg, bestCapo } from './gitarre.js';
-import { transcribe, cleanWords, wordsToText, MODELS } from './transkript.js';
+import { transcribe, cleanWords, wordsToText, MODELS, LANGUAGES } from './transkript.js';
 import { listSongs, getSong, saveSong, deleteSong, persist, pref, setPref } from './speicher.js';
 
 const $ = (id) => document.getElementById(id);
@@ -375,8 +375,16 @@ function bannerProgress(label, frac) {
   textBanner(`<b>${label}</b><div class="balken"><div style="width:${frac === null ? 100 : Math.round(frac * 100)}%" class="${frac === null ? 'laeuft' : ''}"></div></div>`);
 }
 
-function modelKey() { return pref('modell', 'gross'); }
-function modelReady(k = modelKey()) { return pref('modellGeladen_' + k, k === 'gross' && pref('modellGeladen', false)); }
+function modelKey() {
+  const v = pref('modell', 'base');
+  return v === 'gross' ? 'base' : v === 'klein' ? 'tiny' : MODELS[v] ? v : 'base';
+}
+function modelReady(k = modelKey()) {
+  if (pref('modellGeladen_' + k, false)) return true;
+  if (k === 'base') return pref('modellGeladen_gross', false) || pref('modellGeladen', false);
+  if (k === 'tiny') return pref('modellGeladen_klein', false);
+  return false;
+}
 
 async function saveTextStatus(songId, status) {
   const target = state.song && state.song.id === songId ? state.song : await getSong(songId);
@@ -404,7 +412,10 @@ async function startTranscription(song, mono = null, force = false, replace = fa
     }
     phase = 'laden';
     bannerProgress(modelReady(k) ? 'Sprachmodell wird gestartet …' : `Sprachmodell wird geladen (einmalig ${mb} MB) …`, modelReady(k) ? null : 0);
-    const words = await transcribe(mono, MODELS[k].id, (st) => {
+    const lang = song.settings.textSprache || pref('sprache', 'auto');
+    let detected = null;
+    const { words, code } = await transcribe(mono, MODELS[k].id, lang, (st) => {
+      if (st.phase === 'sprache') detected = st.code;
       if (st.phase === 'laden' && !modelReady(k)) bannerProgress(`Sprachmodell wird geladen (einmalig ${mb} MB) … ${Math.round(st.progress || 0)} %`, (st.progress || 0) / 100);
       if (st.phase === 'geladen') setPref('modellGeladen_' + k, true);
       if (st.phase === 'erkennen') { phase = 'erkennen'; bannerProgress(`Text wird erkannt … ${Math.round((st.progress || 0) * 100)} %`, Math.max(0.03, st.progress || 0)); }
@@ -415,7 +426,7 @@ async function startTranscription(song, mono = null, force = false, replace = fa
     const target = state.song && state.song.id === fresh.id ? state.song : fresh;
     target.words = clean;
     target.wordsText = wordsToText(clean);
-    target.textStatus = { ok: true, model: k, raw: words.length, kept: clean.length, at: Date.now() };
+    target.textStatus = { ok: true, model: k, lang: code || detected, raw: words.length, kept: clean.length, at: Date.now() };
     if (replace || !target.settings.lyrics || !target.settings.lyrics.trim()) target.settings.lyrics = target.wordsText;
     await saveSong(target);
     if (state.song && state.song.id === fresh.id) {
@@ -429,9 +440,11 @@ async function startTranscription(song, mono = null, force = false, replace = fa
     const msg = String(err?.message || err).slice(0, 160);
     await saveTextStatus(song.id, { ok: false, model: k, phase, error: msg });
     tx.running = null;
-    if (k === 'gross') {
-      setPref('modell', 'klein');
-      textBanner(`Das große Sprachmodell lief auf diesem Gerät nicht (${msg}). Die App nimmt jetzt das kleinere Modell (${MODELS.klein.mb} MB), es ist etwas ungenauer.`,
+    const next = MODELS[k].next;
+    if (next) {
+      setPref('modell', next);
+      $('optModell').value = next;
+      textBanner(`Das Sprachmodell „${MODELS[k].name}“ lief auf diesem Gerät nicht (${msg}). Die App nimmt jetzt „${MODELS[next].name}“ (${MODELS[next].mb} MB).`,
         [['Mit kleinem Modell erkennen', () => startTranscription(song, null, true, replace), 'haupt'], ['Schließen', () => textBanner(null)]]);
     } else {
       textBanner(`Die Texterkennung hat nicht geklappt (${phase}): ${msg}`,
@@ -580,7 +593,7 @@ const closeOutside = (e) => { if (!e.target.closest('#songListe li.offen')) clos
 document.addEventListener('touchstart', closeOutside, { passive: true });
 document.addEventListener('mousedown', closeOutside);
 
-$('optModell').value = pref('modell', 'gross');
+$('optModell').value = modelKey();
 $('optModell').addEventListener('change', (e) => setPref('modell', e.target.value));
 $('optDeutsch').checked = pref('deutsch', false);
 $('optDeutsch').addEventListener('change', (e) => {
@@ -604,6 +617,7 @@ async function openSong(id) {
   $('songName').value = song.name;
   $('songText').value = song.settings.lyrics || '';
   $('optSilben').checked = song.settings.autoSplit !== false;
+  $('textSprache').value = song.settings.textSprache || pref('sprache', 'auto');
   showRecognized();
   textBanner(null);
   if (tx.running === song.id) bannerProgress('Text wird erkannt …', null);
@@ -1029,6 +1043,12 @@ $('songText').addEventListener('input', (e) => {
   clearTimeout(textTimer);
   textTimer = setTimeout(() => { recompute(); saveSoon(); }, 350);
 });
+$('textSprache').addEventListener('change', (e) => {
+  state.song.settings.textSprache = e.target.value;
+  saveSoon();
+});
+$('optSprache').value = pref('sprache', 'auto');
+$('optSprache').addEventListener('change', (e) => setPref('sprache', e.target.value));
 $('optSilben').addEventListener('change', (e) => { state.song.settings.autoSplit = e.target.checked; recompute(); saveSoon(); });
 $('autoTextUebernehmen').addEventListener('click', () => {
   const t = $('songText');
@@ -1049,7 +1069,7 @@ function renderTextStatus() {
   if (ts) {
     const when = new Date(ts.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     msg += ts.ok
-      ? ` Letzte Erkennung ${when} (${ts.model === 'klein' ? 'kleines' : 'großes'} Modell): ${ts.raw} Wörter gehört, ${ts.kept} übernommen.`
+      ? ` Letzte Erkennung ${when} (Modell ${MODELS[ts.model]?.name || ts.model}${ts.lang ? ', Sprache ' + (LANGUAGES[ts.lang] || ts.lang) : ''}): ${ts.raw} Wörter gehört, ${ts.kept} übernommen.`
       : ` Letzte Erkennung ${when} fehlgeschlagen beim Schritt „${ts.phase}“: ${ts.error}`;
   }
   $('textStatus').textContent = msg;
