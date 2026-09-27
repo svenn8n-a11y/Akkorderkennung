@@ -138,7 +138,7 @@ h2 { font-size: 1rem; font-weight: 700; }
 
 /* Liste */
 .songliste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.songliste button {
+.songliste .wisch-inhalt {
   width: 100%; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px;
   padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px;
 }
@@ -279,3 +279,15 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padd
 .banner-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; }
 .knopf.haupt { background: var(--hl); border-color: var(--hl); color: var(--bg); }
 #textErkennen { margin-top: 8px; }
+
+.songliste li.wisch { position: relative; overflow: hidden; border-radius: 12px; }
+.songliste .wisch-loeschen {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 96px; display: grid; place-items: center;
+  border: 0; border-radius: 0 12px 12px 0; background: var(--rec); color: var(--rec-ink); font-weight: 700; padding: 0;
+}
+.songliste .wisch-inhalt { position: relative; z-index: 1; touch-action: pan-y; transition: transform .2s ease; }
+.songliste li:not(.offen):not(.zieht) .wisch-loeschen { visibility: hidden; }
+.songliste li.zieht .wisch-inhalt { transition: none; }
+@media (prefers-reduced-motion: reduce) { .songliste .wisch-inhalt { transition: none; } }
+.toast { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.toast-knopf { border: 0; background: none; color: var(--hl-soft); font-weight: 800; padding: 8px 4px; min-height: 40px; }

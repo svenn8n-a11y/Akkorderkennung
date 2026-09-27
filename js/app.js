@@ -25,6 +25,7 @@ function toast(text, ms = 3200) {
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toast.timer);
+  clearTimeout(undoTimer);
   toast.timer = setTimeout(() => (t.hidden = true), ms);
 }
 
@@ -437,13 +438,27 @@ async function renderList() {
   $('songLeer').hidden = songs.length > 0;
   for (const s of songs) {
     const li = document.createElement('li');
+    li.className = 'wisch';
+    const del = document.createElement('button');
+    del.className = 'wisch-loeschen';
+    del.type = 'button';
+    del.textContent = 'Löschen';
+    del.tabIndex = -1;
+    del.addEventListener('click', () => deleteWithUndo(s));
     const b = document.createElement('button');
+    b.className = 'wisch-inhalt';
     b.innerHTML = '<span class="n"></span><span class="m"></span><span class="k"></span>';
     b.querySelector('.n').textContent = s.name;
     b.querySelector('.m').textContent = `${fmtDate(s.created)} · ${fmtTime(s.duration || 0)}${s.meta ? ` · ${s.meta.bpm} BPM` : ''}`;
     b.querySelector('.k').textContent = s.meta ? s.meta.key.replace('-Dur', '').replace('-Moll', 'm') : '';
-    b.addEventListener('click', () => openSong(s.id));
-    li.append(b);
+    b.addEventListener('click', () => {
+      if (li.dataset.gewischt) return;
+      if (li.classList.contains('offen')) { closeSwipes(); return; }
+      openSong(s.id);
+    });
+    b.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') deleteWithUndo(s); });
+    li.append(del, b);
+    attachSwipe(li, b);
     ul.append(li);
   }
   try {
@@ -455,6 +470,80 @@ async function renderList() {
       (pers ? ' Der Speicher ist dauerhaft freigegeben.' : ' Tipp: App zum Home-Bildschirm hinzufügen, dann löscht der Browser nichts von selbst. Wichtige Ideen zusätzlich über „Teilen“ sichern.');
   } catch (e) { /* ohne Speicherinfo */ }
 }
+
+const SWIPE_W = 96;
+
+function closeSwipes(except) {
+  document.querySelectorAll('#songListe li.offen').forEach((li) => {
+    if (li === except) return;
+    li.classList.remove('offen');
+    li.querySelector('.wisch-inhalt').style.transform = '';
+  });
+}
+
+function attachSwipe(li, content) {
+  let x0 = 0, y0 = 0, dx = 0, mode = null, base = 0, id = null;
+  content.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    id = e.pointerId; x0 = e.clientX; y0 = e.clientY; dx = 0; mode = null;
+    base = li.classList.contains('offen') ? -SWIPE_W : 0;
+    delete li.dataset.gewischt;
+  });
+  content.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== id) return;
+    const mx = e.clientX - x0, my = e.clientY - y0;
+    if (!mode) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      mode = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+      if (mode === 'x') { content.setPointerCapture(id); closeSwipes(li); li.classList.add('zieht'); }
+    }
+    if (mode !== 'x') return;
+    dx = Math.max(-SWIPE_W * 1.4, Math.min(0, base + mx));
+    content.style.transform = `translateX(${dx}px)`;
+  });
+  const end = (e) => {
+    if (e.pointerId !== id) return;
+    id = null;
+    li.classList.remove('zieht');
+    if (mode !== 'x') return;
+    li.dataset.gewischt = '1';
+    setTimeout(() => delete li.dataset.gewischt, 350);
+    const open = dx < -SWIPE_W / 2;
+    li.classList.toggle('offen', open);
+    content.style.transform = open ? `translateX(${-SWIPE_W}px)` : '';
+  };
+  content.addEventListener('pointerup', end);
+  content.addEventListener('pointercancel', end);
+}
+
+let undoTimer = null;
+async function deleteWithUndo(song) {
+  const full = await getSong(song.id);
+  await deleteSong(song.id);
+  if (state.song && state.song.id === song.id) state.song = null;
+  if (state.screen === 'songs') renderList();
+  const t = $('toast');
+  t.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = `„${song.name}“ gelöscht.`;
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.className = 'toast-knopf';
+  undo.textContent = 'Rückgängig';
+  undo.addEventListener('click', async () => {
+    clearTimeout(undoTimer);
+    t.hidden = true;
+    if (full) await saveSong(full);
+    if (state.screen === 'songs') renderList();
+  });
+  t.append(label, undo);
+  t.hidden = false;
+  clearTimeout(toast.timer);
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => (t.hidden = true), 6000);
+}
+
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#songListe li.offen')) closeSwipes(); });
 
 $('optDeutsch').checked = pref('deutsch', false);
 $('optDeutsch').addEventListener('change', (e) => {
@@ -1148,10 +1237,9 @@ function chordSheetText() {
 $('songLoeschen').addEventListener('click', () => ($('loeschenFrage').hidden = false));
 $('loeschenNein').addEventListener('click', () => ($('loeschenFrage').hidden = true));
 $('loeschenJa').addEventListener('click', async () => {
-  await deleteSong(state.song.id);
-  state.song = null;
+  const song = state.song;
   history.back();
-  toast('Idee gelöscht.');
+  await deleteWithUndo(song);
 });
 
 /* Stimmgerät */
