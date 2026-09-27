@@ -1,43 +1,55 @@
+export const MODELS = {
+  gross: { id: 'onnx-community/whisper-base_timestamped', mb: 77 },
+  klein: { id: 'onnx-community/whisper-tiny_timestamped', mb: 41 },
+};
+
 let worker = null;
 let seq = 0;
 const jobs = new Map();
+const TIMEOUT = 150000;
+
+function kill(reason) {
+  if (worker) worker.terminate();
+  worker = null;
+  for (const job of jobs.values()) { clearTimeout(job.timer); job.reject(new Error(reason)); }
+  jobs.clear();
+}
+
+function arm(job) {
+  clearTimeout(job.timer);
+  job.timer = setTimeout(() => kill('Die Texterkennung reagiert nicht mehr. Vermutlich hat das Gerät sie wegen Speichermangel beendet.'), TIMEOUT);
+}
 
 function getWorker() {
   if (!worker) {
     worker = new Worker(new URL('./transkript-worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
-      const job = jobs.get(e.data.id);
-      if (!job) return;
       const m = e.data;
+      const job = jobs.get(m.id);
+      if (!job) return;
+      arm(job);
+      const done = (fn) => { clearTimeout(job.timer); jobs.delete(m.id); fn(); };
       if (m.type === 'laden') job.onStatus({ phase: 'laden', progress: m.progress });
-      else if (m.type === 'geladen') { job.onStatus({ phase: 'geladen' }); if (job.onlyLoad) { jobs.delete(m.id); job.resolve(null); } }
+      else if (m.type === 'geladen') { job.onStatus({ phase: 'geladen' }); if (job.onlyLoad) done(() => job.resolve(null)); }
       else if (m.type === 'erkennen') job.onStatus({ phase: 'erkennen', progress: m.progress });
-      else if (m.type === 'fertig') { jobs.delete(m.id); job.resolve(m.words); }
-      else if (m.type === 'fehler') { jobs.delete(m.id); job.reject(new Error(m.message)); }
+      else if (m.type === 'fertig') done(() => job.resolve(m.words));
+      else if (m.type === 'fehler') done(() => job.reject(new Error(m.message)));
     };
-    worker.onerror = (e) => {
-      for (const job of jobs.values()) job.reject(new Error(e.message || 'Texterkennung abgestürzt'));
-      jobs.clear();
-      worker = null;
-    };
+    worker.onerror = (e) => kill('Texterkennung abgestürzt: ' + (e.message || 'unbekannter Fehler'));
+    worker.onmessageerror = () => kill('Texterkennung: Nachricht nicht lesbar');
   }
   return worker;
 }
 
-export function transcribe(samples16k, onStatus = () => {}) {
+export function transcribe(samples16k, model, onStatus = () => {}) {
   return new Promise((resolve, reject) => {
     const id = ++seq;
-    jobs.set(id, { resolve, reject, onStatus });
+    const job = { resolve, reject, onStatus };
+    jobs.set(id, job);
+    arm(job);
     const copy = new Float32Array(samples16k);
-    getWorker().postMessage({ id, audio: copy }, [copy.buffer]);
-  });
-}
-
-export function preloadModel(onStatus = () => {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++seq;
-    jobs.set(id, { resolve, reject, onStatus, onlyLoad: true });
-    getWorker().postMessage({ id, onlyLoad: true });
+    try { getWorker().postMessage({ id, audio: copy, model }, [copy.buffer]); }
+    catch (err) { kill('Texterkennung ließ sich nicht starten: ' + err.message); }
   });
 }
 

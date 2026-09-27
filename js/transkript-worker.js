@@ -2,12 +2,13 @@ import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transfo
 
 env.allowLocalModels = false;
 
-const MODEL = 'onnx-community/whisper-base_timestamped';
 let asr = null;
+let loadedModel = null;
 
-function load(onProgress) {
-  if (!asr) {
-    asr = pipeline('automatic-speech-recognition', MODEL, {
+function load(model, onProgress) {
+  if (!asr || loadedModel !== model) {
+    loadedModel = model;
+    asr = pipeline('automatic-speech-recognition', model, {
       dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
       device: 'wasm',
       progress_callback: (x) => {
@@ -19,9 +20,9 @@ function load(onProgress) {
 }
 
 self.onmessage = async (e) => {
-  const { id, audio, onlyLoad } = e.data;
+  const { id, audio, onlyLoad, model } = e.data;
   try {
-    const run = await load((p) => self.postMessage({ id, type: 'laden', progress: p }));
+    const run = await load(model, (p) => self.postMessage({ id, type: 'laden', progress: p }));
     self.postMessage({ id, type: 'geladen' });
     if (onlyLoad) return;
     const SR = 16000, WIN = 30 * SR, STEP = 26 * SR;

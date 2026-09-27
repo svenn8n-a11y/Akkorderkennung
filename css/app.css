@@ -297,3 +297,5 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padd
 .blatt-zwischen button { border: 0; background: none; padding: 4px 2px; font-weight: 800; color: var(--chord); font-size: calc(1.1rem * var(--fs)); min-height: 36px; }
 .blatt-zwischen.jetzt { background: var(--hl-soft); }
 .blatt-zeile.ohne-akkorde .silbe { padding-top: 0; }
+.zeile-wahl { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; color: var(--muted); padding: 8px 0; }
+.zeile-wahl select { min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 4px 8px; font-size: 1rem; }
