@@ -45,6 +45,10 @@ function getWorker() {
   return worker;
 }
 
+export function releaseTranscriber() {
+  if (worker && !jobs.size) { worker.terminate(); worker = null; }
+}
+
 export function transcribe(samples16k, model, language, onStatus = () => {}) {
   return new Promise((resolve, reject) => {
     const id = ++seq;

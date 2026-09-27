@@ -3,7 +3,7 @@ import { toMono16k, trackPitch, normalize } from './pitch.js';
 import { analyse, buildAbc } from './analyse.js';
 import { midiName, keyName, chordName, chordKey, allKeys, setGermanNames, pcName, guitarChordName, mod12 } from './musik.js';
 import { diagramSvg, bestCapo } from './gitarre.js';
-import { transcribe, cleanWords, wordsToText, MODELS, LANGUAGES } from './transkript.js';
+import { transcribe, cleanWords, wordsToText, MODELS, LANGUAGES, releaseTranscriber } from './transkript.js';
 import { listSongs, getSong, saveSong, deleteSong, persist, pref, setPref } from './speicher.js';
 
 const $ = (id) => document.getElementById(id);
@@ -375,8 +375,10 @@ function bannerProgress(label, frac) {
   textBanner(`<b>${label}</b><div class="balken"><div style="width:${frac === null ? 100 : Math.round(frac * 100)}%" class="${frac === null ? 'laeuft' : ''}"></div></div>`);
 }
 
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 function modelKey() {
-  const v = pref('modell', 'base');
+  const v = pref('modell', IS_IOS ? 'tiny' : 'base');
   return v === 'gross' ? 'base' : v === 'klein' ? 'tiny' : MODELS[v] ? v : 'base';
 }
 function modelReady(k = modelKey()) {
@@ -404,6 +406,7 @@ async function startTranscription(song, mono = null, force = false, replace = fa
     return;
   }
   tx.running = song.id;
+  setPref('erkennungLaeuft', { k, id: song.id, at: Date.now() });
   let phase = 'vorbereiten';
   try {
     if (!mono) {
@@ -452,7 +455,32 @@ async function startTranscription(song, mono = null, force = false, replace = fa
     }
   } finally {
     tx.running = null;
+    setPref('erkennungLaeuft', null);
+    releaseTranscriber();
   }
+}
+
+const crash = (() => {
+  const c = pref('erkennungLaeuft', null);
+  setPref('erkennungLaeuft', null);
+  if (!c || Date.now() - c.at > 15 * 60 * 1000) return null;
+  const next = MODELS[c.k]?.next || null;
+  if (next) setPref('modell', next);
+  else setPref('textAuto', false);
+  return { ...c, next };
+})();
+
+function crashBanner(song) {
+  if (!crash || crash.id !== song.id || crash.shown) return false;
+  crash.shown = true;
+  if (crash.next) {
+    textBanner(`Die Texterkennung hat das iPhone überlastet, dadurch wurde die Seite neu geladen (Modell „${MODELS[crash.k].name}“). Die App nutzt jetzt das kleinere Modell „${MODELS[crash.next].name}“.`,
+      [['Text jetzt erkennen', () => startTranscription(state.song, null, true, true), 'haupt'], ['Später', () => textBanner(null)]]);
+  } else {
+    textBanner('Auch das kleinste Sprachmodell ist für dieses Gerät zu groß, die Seite wurde neu geladen. Trag den Text bitte im Reiter „Text“ ein oder lass das Lied am Mac auswerten. Die automatische Texterkennung ist ausgeschaltet.',
+      [['Schließen', () => textBanner(null)]]);
+  }
+  return true;
 }
 
 function showRecognized() {
@@ -621,6 +649,7 @@ async function openSong(id) {
   showRecognized();
   textBanner(null);
   if (tx.running === song.id) bannerProgress('Text wird erkannt …', null);
+  crashBanner(song);
   $('textDiktat').hidden = !SR;
   $('loeschenFrage').hidden = true;
   $('songEinst').open = false;
@@ -1438,6 +1467,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && state.screen === 'song') { state.startS16 = currentPos(); stopPlayback(); }
 });
 
+if (crash) getSong(crash.id).then((song) => { if (song) openSong(song.id); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
 requestAnimationFrame(() => drawTrail($('recSpur'), [], 8));

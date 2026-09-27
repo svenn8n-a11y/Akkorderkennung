@@ -1,6 +1,7 @@
 import { pipeline, env, Tensor } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0/dist/transformers.min.js';
 
 env.allowLocalModels = false;
+if (env.backends?.onnx?.wasm) { env.backends.onnx.wasm.numThreads = 1; env.backends.onnx.wasm.proxy = false; }
 
 let asr = null;
 let loadedModel = null;
