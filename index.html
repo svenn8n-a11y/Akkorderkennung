@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Akkorderkennung</title>
+<meta name="description" content="Melodie singen, Noten und Gitarrenakkorde bekommen.">
+<meta name="theme-color" content="#0f151c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Akkorde">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+
+  <main class="screen" id="screen-aufnahme" data-screen="aufnahme">
+    <header class="kopf"><h1>Melodie festhalten</h1></header>
+    <section class="rec">
+      <div class="rec-anzeige">
+        <div class="rec-note" id="recNote">–</div>
+        <div class="rec-cents" id="recCents">Sing einfach los</div>
+      </div>
+      <canvas id="recSpur" class="spur" height="160" aria-label="Tonverlauf"></canvas>
+      <div class="rec-zeit" id="recZeit">0:00</div>
+      <button class="rec-knopf" id="recKnopf" aria-label="Aufnahme starten"><span></span></button>
+      <p class="rec-hinweis" id="recHinweis">Tippen zum Aufnehmen, nochmal tippen zum Beenden.</p>
+      <div class="rec-optionen">
+        <label class="schalter"><input type="checkbox" id="optMetronom"><span>Klick-Metronom beim Singen</span></label>
+        <label class="zahl" id="metroTempoWrap" hidden>Tempo <input type="number" id="optMetroBpm" min="40" max="200" value="90" inputmode="numeric"> BPM</label>
+        <label class="schalter" id="optSpracheWrap" hidden><input type="checkbox" id="optSprache"><span>Text beim Singen mitschreiben (Versuch)</span></label>
+      </div>
+      <label class="datei-knopf">Sprachmemo laden<input type="file" id="dateiLaden" accept="audio/*"></label>
+    </section>
+  </main>
+
+  <main class="screen" id="screen-songs" data-screen="songs" hidden>
+    <header class="kopf"><h1>Meine Ideen</h1></header>
+    <ul class="songliste" id="songListe"></ul>
+    <p class="leer" id="songLeer" hidden>Noch keine Aufnahme. Tippe auf <b>Aufnehmen</b> und sing eine Melodie.</p>
+    <details class="einst global">
+      <summary>Einstellungen</summary>
+      <label class="schalter"><input type="checkbox" id="optDeutsch"><span>Deutsche Tonnamen (H statt B)</span></label>
+      <p class="klein" id="speicherInfo"></p>
+    </details>
+  </main>
+
+  <main class="screen" id="screen-stimmen" data-screen="stimmen" hidden>
+    <header class="kopf"><h1>Welchen Ton singe ich?</h1></header>
+    <section class="tuner">
+      <div class="tuner-note" id="tunerNote">–</div>
+      <div class="tuner-skala" aria-hidden="true">
+        <div class="tuner-mitte"></div>
+        <div class="tuner-nadel" id="tunerNadel"></div>
+        <span class="l">zu tief</span><span class="r">zu hoch</span>
+      </div>
+      <div class="tuner-werte" id="tunerWerte">&nbsp;</div>
+      <canvas id="tunerSpur" class="spur" height="200" aria-label="Tonverlauf"></canvas>
+      <button class="knopf gross" id="tunerKnopf">Mikrofon starten</button>
+    </section>
+  </main>
+
+  <main class="screen" id="screen-gitarre" data-screen="gitarre" hidden>
+    <header class="kopf"><h1>Akkorde vom Instrument</h1></header>
+    <section class="gitarre">
+      <div class="git-akkord" id="gitAkkord">–</div>
+      <div class="git-griff" id="gitGriff"></div>
+      <div class="chroma" id="gitChroma"></div>
+      <button class="knopf gross" id="gitKnopf">Zuhören starten</button>
+      <p class="klein">Schlag jeden Akkord einmal kräftig an und lass ihn klingen. Gezupfte Einzeltöne und schnelle Wechsel erkennt die App schlechter.</p>
+      <div class="git-verlauf-kopf"><h2>Verlauf</h2><button class="knopf klein-k" id="gitKopieren">Kopieren</button><button class="knopf klein-k" id="gitLeeren">Leeren</button></div>
+      <ol class="git-verlauf" id="gitVerlauf"></ol>
+    </section>
+  </main>
+
+  <main class="screen song" id="screen-song" data-screen="song" hidden>
+    <header class="kopf song-kopf">
+      <button class="zurueck" id="songZurueck" aria-label="Zurück zur Liste">‹</button>
+      <input class="song-name" id="songName" aria-label="Name der Idee">
+    </header>
+    <div class="song-info" id="songInfo"></div>
+
+    <div class="tonart-leiste">
+      <span class="tonart-label">Tonart</span>
+      <button type="button" id="tonartRunter" aria-label="Einen Halbton tiefer">−</button>
+      <select id="tonartWahl" aria-label="Tonart wählen"></select>
+      <button type="button" id="tonartHoch" aria-label="Einen Halbton höher">+</button>
+    </div>
+    <div class="tonart-leiste kapo-leiste">
+      <span class="tonart-label">Kapo</span>
+      <select id="setCapo" aria-label="Bund des Kapodasters"></select>
+    </div>
+    <p class="kapo" id="kapoInfo"></p>
+    <p class="klein tonart-hinweis" id="tonartHinweis" hidden>Transponiert. Noten, Akkorde und die Gitarren-Wiedergabe sind verschoben. Die Originalaufnahme klingt weiter in der gesungenen Tonart.</p>
+
+    <div class="umschalter" role="tablist">
+      <button role="tab" id="tabBlatt" aria-selected="true">Akkordblatt</button>
+      <button role="tab" id="tabNoten" aria-selected="false">Noten</button>
+      <button role="tab" id="tabText" aria-selected="false">Text</button>
+    </div>
+
+    <section class="ansicht" id="ansichtBlatt"></section>
+    <section class="ansicht noten-papier" id="ansichtNoten" hidden><div id="notenBild"></div></section>
+    <section class="ansicht text-ansicht" id="ansichtText" hidden>
+      <p class="klein">Schreib deinen Text hier hinein oder diktiere ihn über das Mikrofon der Tastatur. Pro Zeile eine Liedzeile. Silben trennst du mit Bindestrich (<i>Son-nen-schein</i>), sonst trennt die App automatisch.</p>
+      <textarea id="songText" rows="8" placeholder="Hier kommt dein Liedtext hin …"></textarea>
+      <div class="zeile">
+        <label class="schalter"><input type="checkbox" id="optSilben" checked><span>Silben automatisch trennen</span></label>
+        <button class="knopf" id="textDiktat" hidden>Text sprechen</button>
+      </div>
+      <p class="klein" id="textStatus"></p>
+      <div class="auto-text" id="autoText" hidden>
+        <p class="klein">Beim Singen erkannt:</p>
+        <blockquote id="autoTextInhalt"></blockquote>
+        <button class="knopf" id="autoTextUebernehmen">Übernehmen</button>
+      </div>
+    </section>
+
+    <section class="griffe-bereich">
+      <h2>Griffe</h2>
+      <div class="griffe" id="griffe"></div>
+    </section>
+
+    <details class="einst" id="songEinst">
+      <summary>Erkennung korrigieren: Tonart, Tempo, Takt</summary>
+      <div class="einst-grid">
+        <label>Erkannte Tonart korrigieren<select id="setKey"></select></label>
+        <label>Tempo (BPM)
+          <span class="stepper"><button type="button" data-step="-1" data-for="setBpm">−</button><input type="number" id="setBpm" min="40" max="220" inputmode="numeric"><button type="button" data-step="1" data-for="setBpm">+</button></span>
+        </label>
+        <label>Takt<select id="setMeter"><option value="4">4/4</option><option value="3">3/4</option></select></label>
+        <label>Notenraster<select id="setGrid"><option value="8">Achtel (ruhiger)</option><option value="16">Sechzehntel (genauer)</option></select></label>
+        <label>Akkorde pro Takt<select id="setPerBar"><option value="1">1</option><option value="2">2</option></select></label>
+        <label>Taktanfang
+          <span class="stepper"><button type="button" id="shiftMinus">◀</button><output id="shiftWert">0</output><button type="button" id="shiftPlus">▶</button></span>
+        </label>
+        <button type="button" class="knopf" id="setReset">Alles automatisch</button>
+      </div>
+    </details>
+
+    <section class="teilen">
+      <h2>Teilen &amp; sichern</h2>
+      <div class="teilen-knoepfe">
+        <button class="knopf" id="teilenBild">Noten als Bild</button>
+        <button class="knopf" id="teilenBlatt">Akkordblatt als Text</button>
+        <button class="knopf" id="teilenMidi">MIDI-Datei</button>
+        <button class="knopf" id="teilenAudio">Aufnahme</button>
+      </div>
+      <button class="knopf warnung" id="songLoeschen">Idee löschen</button>
+      <div class="bestaetigung" id="loeschenFrage" hidden>
+        <span>Wirklich löschen?</span>
+        <button class="knopf warnung" id="loeschenJa">Ja, löschen</button>
+        <button class="knopf" id="loeschenNein">Abbrechen</button>
+      </div>
+    </section>
+
+    <div class="spieler">
+      <button class="spiel-knopf" id="spielKnopf" aria-label="Abspielen">▶</button>
+      <select id="spielModus" aria-label="Was abspielen">
+        <option value="original">Aufnahme</option>
+        <option value="beides">Melodie + Gitarre</option>
+        <option value="akkorde">Nur Gitarre</option>
+        <option value="original+akkorde">Aufnahme + Gitarre</option>
+      </select>
+      <label class="tempo">Tempo <output id="speedWert">100 %</output><input type="range" id="speed" min="50" max="150" step="5" value="100"></label>
+      <div class="schrift"><button id="schriftKlein" aria-label="Schrift kleiner">A−</button><button id="schriftGross" aria-label="Schrift größer">A+</button></div>
+    </div>
+    <audio id="audioEl" preload="auto" playsinline></audio>
+  </main>
+
+  <nav class="tabs" id="tabs">
+    <button data-go="aufnahme" aria-current="page"><span class="ic ic-rec"></span>Aufnehmen</button>
+    <button data-go="songs"><span class="ic ic-list"></span>Ideen</button>
+    <button data-go="stimmen"><span class="ic ic-tuner"></span>Ton</button>
+    <button data-go="gitarre"><span class="ic ic-git"></span>Gitarre</button>
+  </nav>
+
+  <div class="overlay" id="overlay" hidden>
+    <div class="overlay-box">
+      <p id="overlayText">Melodie wird ausgewertet …</p>
+      <div class="balken"><div id="overlayBalken"></div></div>
+    </div>
+  </div>
+  <div class="popup" id="akkordPopup" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script src="vendor/abcjs-basic-min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
