@@ -61,7 +61,7 @@ export function transcribe(samples16k, model, language, onStatus = () => {}) {
   });
 }
 
-const JUNK = /untertitel|amara\.org|zdf|swr|vielen dank f(ü|ue)rs zuschauen|copyright/i;
+const JUNK = /untertitel|amara\.org|zdf|swr|vielen dank f(ü|ue)rs zuschauen|copyright|^[(*\[♪]*\s*(musik|music|müzik|instrumental|applaus)\s*[)*\]♪.]*$/i;
 
 export function cleanWords(words, track) {
   const lv = [...track.level].sort((a, b) => a - b);

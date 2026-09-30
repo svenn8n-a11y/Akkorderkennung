@@ -313,4 +313,4 @@ ${abc}
   log(`${keyName(an.key)}, ${an.bpm} BPM, Akkorde ${akkorde.join(' ')}, ${clean.length} Wörter`);
 }
 
-main().catch((e) => { console.error('Fehler:', e); process.exit(1); });
+main().then(() => process.exit(0)).catch((e) => { console.error('Fehler:', e); process.exit(1); });
